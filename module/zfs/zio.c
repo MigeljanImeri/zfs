@@ -920,6 +920,8 @@ zio_create(zio_t *pio, spa_t *spa, uint64_t txg, const blkptr_t *bp,
 		if (zio->io_child_type == ZIO_CHILD_GANG)
 			zio->io_gang_leader = pio->io_gang_leader;
 		zio_add_child_first(pio, zio);
+		if (pio->io_flags & ZIO_FLAG_DONT_QUEUE)
+			zio->io_flags |= ZIO_FLAG_DONT_QUEUE;
 	}
 
 	taskq_init_ent(&zio->io_tqent);

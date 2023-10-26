@@ -377,6 +377,7 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 		} else {
 			mbuf = data;
 			zio_flags |= ZIO_FLAG_DIO_HP_READ;
+			zio_flags |= ZIO_FLAG_DONT_QUEUE;
 			io_size = MIN(db->db.db_size, total_io);
 		}
 
