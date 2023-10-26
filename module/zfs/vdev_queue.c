@@ -976,7 +976,11 @@ vdev_queue_io_done(zio_t *zio)
 	vq->vq_io_delta_ts = zio->io_delta = now - zio->io_timestamp;
 
 	mutex_enter(&vq->vq_lock);
-	vdev_queue_pending_remove(vq, zio);
+
+	if (!(zio->io_flags & ZIO_FLAG_DONT_QUEUE &&
+		zio->io_flags & ZIO_FLAG_DIO_HP_READ)) {
+		vdev_queue_pending_remove(vq, zio);
+	}
 
 	while ((nio = vdev_queue_io_to_issue(vq)) != NULL) {
 		mutex_exit(&vq->vq_lock);
