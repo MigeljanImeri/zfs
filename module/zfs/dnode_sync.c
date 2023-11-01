@@ -465,11 +465,12 @@ dnode_evict_dbufs(dnode_t *dn)
 {
 	dmu_buf_impl_t *db_marker;
 	dmu_buf_impl_t *db, *db_next;
+	zfs_btree_index_t where;
 
 	db_marker = kmem_alloc(sizeof (dmu_buf_impl_t), KM_SLEEP);
 
 	mutex_enter(&dn->dn_dbufs_mtx);
-	for (db = avl_first(&dn->dn_dbufs); db != NULL; db = db_next) {
+	for (db = zfs_btree_first(&dn->dn_dbufs, NULL); db != NULL; db = db_next) {
 
 #ifdef	ZFS_DEBUG
 		DB_DNODE_ENTER(db);
@@ -483,8 +484,8 @@ dnode_evict_dbufs(dnode_t *dn)
 			db_marker->db_level = db->db_level;
 			db_marker->db_blkid = db->db_blkid;
 			db_marker->db_state = DB_SEARCH;
-			avl_insert_here(&dn->dn_dbufs, db_marker, db,
-			    AVL_BEFORE);
+			zfs_btree_prev(&dn->dn_dbufs, &where, &where);
+			zfs_btree_add_idx(&dn->dn_dbufs, db_marker, &where);
 
 			/*
 			 * We need to use the "marker" dbuf rather than
@@ -501,12 +502,12 @@ dnode_evict_dbufs(dnode_t *dn)
 			 */
 			dbuf_destroy(db);
 
-			db_next = AVL_NEXT(&dn->dn_dbufs, db_marker);
-			avl_remove(&dn->dn_dbufs, db_marker);
+			db_next = zfs_btree_next(&dn->dn_dbufs, &where, &where);
+			zfs_btree_remove(&dn->dn_dbufs, db_marker);
 		} else {
 			db->db_pending_evict = TRUE;
 			mutex_exit(&db->db_mtx);
-			db_next = AVL_NEXT(&dn->dn_dbufs, db);
+			db_next = zfs_btree_next(&dn->dn_dbufs, &where, &where);
 		}
 	}
 	mutex_exit(&dn->dn_dbufs_mtx);

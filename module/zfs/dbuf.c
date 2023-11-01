@@ -1122,7 +1122,7 @@ dbuf_verify(dmu_buf_impl_t *db)
 		ASSERT3U(db->db_level, <, dn->dn_nlevels);
 		ASSERT(db->db_blkid == DMU_BONUS_BLKID ||
 		    db->db_blkid == DMU_SPILL_BLKID ||
-		    !avl_is_empty(&dn->dn_dbufs));
+		    dn->dn_dbufs.bt_num_nodes != 0);
 	}
 	if (db->db_blkid == DMU_BONUS_BLKID) {
 		ASSERT(dn != NULL);
@@ -2015,7 +2015,7 @@ dbuf_free_range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 	dmu_buf_impl_t *db_search;
 	dmu_buf_impl_t *db, *db_next;
 	uint64_t txg = tx->tx_txg;
-	avl_index_t where;
+	zfs_btree_index_t where;
 	dbuf_dirty_record_t *dr;
 
 	if (end_blkid > dn->dn_maxblkid &&
@@ -2030,13 +2030,13 @@ dbuf_free_range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 	db_search->db_state = DB_SEARCH;
 
 	mutex_enter(&dn->dn_dbufs_mtx);
-	db = avl_find(&dn->dn_dbufs, db_search, &where);
+	db = zfs_btree_find(&dn->dn_dbufs, db_search, &where);
 	ASSERT3P(db, ==, NULL);
 
-	db = avl_nearest(&dn->dn_dbufs, where, AVL_AFTER);
+	db = zfs_btree_next(&dn->dn_dbufs, &where, &where);
 
 	for (; db != NULL; db = db_next) {
-		db_next = AVL_NEXT(&dn->dn_dbufs, db);
+		db_next = zfs_btree_next(&dn->dn_dbufs, &where, &where);
 		ASSERT(db->db_blkid != DMU_BONUS_BLKID);
 
 		if (db->db_level != 0 || db->db_blkid > end_blkid) {
@@ -3282,7 +3282,7 @@ dbuf_destroy(dmu_buf_impl_t *db)
 		if (needlock)
 			mutex_enter_nested(&dn->dn_dbufs_mtx,
 			    NESTED_SINGLE);
-		avl_remove(&dn->dn_dbufs, db);
+		zfs_btree_remove(&dn->dn_dbufs, db);
 		membar_producer();
 		DB_DNODE_EXIT(db);
 		if (needlock)
@@ -3496,7 +3496,7 @@ dbuf_create(dnode_t *dn, uint8_t level, uint64_t blkid,
 		DBUF_STAT_BUMP(hash_insert_race);
 		return (odb);
 	}
-	avl_add(&dn->dn_dbufs, db);
+	zfs_btree_add(&dn->dn_dbufs, db);
 
 	db->db_state = DB_UNCACHED;
 	DTRACE_SET_STATE(db, "regular buffer created");

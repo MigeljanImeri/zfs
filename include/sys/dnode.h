@@ -361,7 +361,7 @@ struct dnode {
 	 * a reference to the dbuf, or look up a non-existent node with
 	 * db_state = DB_SEARCH (see dbuf_free_range for an example).
 	 */
-	avl_tree_t dn_dbufs;
+	zfs_btree_t dn_dbufs;
 
 	/* protected by dn_struct_rwlock */
 	struct dmu_buf_impl *dn_bonus;	/* bonus buffer dbuf */
@@ -387,7 +387,7 @@ struct dnode {
  * only for dbufs not counted there (bonus buffers) and just add them.
  */
 #define	DN_DBUFS_COUNT(dn)	((dn)->dn_dbufs_count + \
-    avl_numnodes(&(dn)->dn_dbufs))
+    zfs_btree_numnodes(&(dn)->dn_dbufs))
 
 /*
  * We use this (otherwise unused) bit to indicate if the value of

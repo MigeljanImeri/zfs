@@ -168,8 +168,8 @@ dnode_cons(void *arg, void *unused, int kmflag)
 	dn->dn_id_flags = 0;
 
 	dn->dn_dbufs_count = 0;
-	avl_create(&dn->dn_dbufs, dbuf_compare, sizeof (dmu_buf_impl_t),
-	    offsetof(dmu_buf_impl_t, db_link));
+	zfs_btree_create(&dn->dn_dbufs, dbuf_compare, NULL, 
+			sizeof (dmu_buf_impl_t));
 
 	dn->dn_moved = 0;
 	return (0);
@@ -224,7 +224,7 @@ dnode_dest(void *arg, void *unused)
 	ASSERT0(dn->dn_id_flags);
 
 	ASSERT0(dn->dn_dbufs_count);
-	avl_destroy(&dn->dn_dbufs);
+	zfs_btree_destroy(&dn->dn_dbufs);
 }
 
 static int
@@ -730,7 +730,7 @@ dnode_allocate(dnode_t *dn, dmu_object_type_t ot, int blocksize, int ibs,
 	ASSERT0(dn->dn_assigned_txg);
 	ASSERT(zfs_refcount_is_zero(&dn->dn_tx_holds));
 	ASSERT3U(zfs_refcount_count(&dn->dn_holds), <=, 1);
-	ASSERT(avl_is_empty(&dn->dn_dbufs));
+	ASSERT0(dn->dn_dbufs.bt_num_nodes);
 
 	for (i = 0; i < TXG_SIZE; i++) {
 		ASSERT0(dn->dn_next_nblkptr[i]);
@@ -923,8 +923,8 @@ dnode_move_impl(dnode_t *odn, dnode_t *ndn)
 	ndn->dn_dirtyctx_firstset = odn->dn_dirtyctx_firstset;
 	ASSERT(zfs_refcount_count(&odn->dn_tx_holds) == 0);
 	zfs_refcount_transfer(&ndn->dn_holds, &odn->dn_holds);
-	ASSERT(avl_is_empty(&ndn->dn_dbufs));
-	avl_swap(&ndn->dn_dbufs, &odn->dn_dbufs);
+	ASSERT0(ndn->dn_dbufs.bt_num_nodes);
+	zfs_btree_swap(&ndn->dn_dbufs, &odn->dn_dbufs);
 	ndn->dn_dbufs_count = odn->dn_dbufs_count;
 	ndn->dn_bonus = odn->dn_bonus;
 	ndn->dn_have_spill = odn->dn_have_spill;
@@ -952,8 +952,8 @@ dnode_move_impl(dnode_t *odn, dnode_t *ndn)
 	 */
 	odn->dn_dbuf = NULL;
 	odn->dn_handle = NULL;
-	avl_create(&odn->dn_dbufs, dbuf_compare, sizeof (dmu_buf_impl_t),
-	    offsetof(dmu_buf_impl_t, db_link));
+	zfs_btree_create(&odn->dn_dbufs, dbuf_compare, NULL, 
+			sizeof (dmu_buf_impl_t));
 	odn->dn_dbufs_count = 0;
 	odn->dn_bonus = NULL;
 	dmu_zfetch_fini(&odn->dn_zfetch);
@@ -1821,7 +1821,7 @@ dnode_setdirty(dnode_t *dn, dmu_tx_t *tx)
 	}
 
 	ASSERT(!zfs_refcount_is_zero(&dn->dn_holds) ||
-	    !avl_is_empty(&dn->dn_dbufs));
+	    	dn->dn_dbufs.bt_num_nodes != 0);
 	ASSERT(dn->dn_datablksz != 0);
 	ASSERT0(dn->dn_next_bonuslen[txg & TXG_MASK]);
 	ASSERT0(dn->dn_next_blksz[txg & TXG_MASK]);
@@ -1872,6 +1872,7 @@ int
 dnode_set_blksz(dnode_t *dn, uint64_t size, int ibs, dmu_tx_t *tx)
 {
 	dmu_buf_impl_t *db;
+	zfs_btree_index_t where;
 	int err;
 
 	ASSERT3U(size, <=, spa_maxblocksize(dmu_objset_spa(dn->dn_objset)));
@@ -1893,11 +1894,12 @@ dnode_set_blksz(dnode_t *dn, uint64_t size, int ibs, dmu_tx_t *tx)
 		goto fail;
 
 	mutex_enter(&dn->dn_dbufs_mtx);
-	for (db = avl_first(&dn->dn_dbufs); db != NULL;
-	    db = AVL_NEXT(&dn->dn_dbufs, db)) {
+	for (db = zfs_btree_first(&dn->dn_dbufs, NULL); db != NULL;
+	    db = zfs_btree_next(&dn->dn_dbufs, &where, &where)) {
 		if (db->db_blkid != 0 && db->db_blkid != DMU_BONUS_BLKID &&
 		    db->db_blkid != DMU_SPILL_BLKID) {
 			mutex_exit(&dn->dn_dbufs_mtx);
+			zfs_dbgmsg("Going to fail because something happened.");
 			goto fail;
 		}
 	}
@@ -2088,7 +2090,7 @@ dnode_dirty_l1range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 {
 	dmu_buf_impl_t *db_search;
 	dmu_buf_impl_t *db;
-	avl_index_t where;
+	zfs_btree_index_t where;
 
 	db_search = kmem_zalloc(sizeof (dmu_buf_impl_t), KM_SLEEP);
 
@@ -2099,9 +2101,9 @@ dnode_dirty_l1range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 	db_search->db_state = DB_SEARCH;
 	for (;;) {
 
-		db = avl_find(&dn->dn_dbufs, db_search, &where);
+		db = zfs_btree_find(&dn->dn_dbufs, db_search, &where);
 		if (db == NULL)
-			db = avl_nearest(&dn->dn_dbufs, where, AVL_AFTER);
+			db = zfs_btree_next(&dn->dn_dbufs, &where, &where);
 
 		if (db == NULL || db->db_level != 1 ||
 		    db->db_blkid >= end_blkid) {
@@ -2134,10 +2136,10 @@ dnode_dirty_l1range(dnode_t *dn, uint64_t start_blkid, uint64_t end_blkid,
 	db_search->db_level = 1;
 	db_search->db_blkid = start_blkid + 1;
 	db_search->db_state = DB_SEARCH;
-	db = avl_find(&dn->dn_dbufs, db_search, &where);
+	db = zfs_btree_find(&dn->dn_dbufs, db_search, &where);
 	if (db == NULL)
-		db = avl_nearest(&dn->dn_dbufs, where, AVL_AFTER);
-	for (; db != NULL; db = AVL_NEXT(&dn->dn_dbufs, db)) {
+		db = zfs_btree_next(&dn->dn_dbufs, &where, &where);
+	for (; db != NULL; db = zfs_btree_next(&dn->dn_dbufs, &where, &where)) {
 		if (db->db_level != 1 || db->db_blkid >= end_blkid)
 			break;
 		if (db->db_state != DB_EVICTING)

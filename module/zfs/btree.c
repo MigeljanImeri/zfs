@@ -192,6 +192,23 @@ zfs_btree_leaf_free(zfs_btree_t *tree, void *ptr)
 }
 
 void
+zfs_btree_swap(zfs_btree_t *tree1, zfs_btree_t *tree2)
+{
+
+	zfs_btree_hdr_t *temp_node;
+	ulong_t temp_num_nodes;
+
+	ASSERT3P(tree1->bt_compar, ==, tree2->bt_compar);
+
+	temp_node = tree1->bt_root;
+	temp_num_nodes = tree1->bt_num_nodes;
+	tree1->bt_root = tree2->bt_root;
+	tree1->bt_num_nodes = tree2->bt_num_nodes;
+	tree2->bt_root = temp_node;
+	tree2->bt_num_nodes = temp_num_nodes;
+}
+
+void
 zfs_btree_create(zfs_btree_t *tree, int (*compar) (const void *, const void *),
     bt_find_in_buf_f bt_find_in_buf, size_t size)
 {
@@ -654,7 +671,7 @@ zfs_btree_insert_into_parent(zfs_btree_t *tree, zfs_btree_hdr_t *old_node,
 		ASSERT3P(old_node, ==, tree->bt_root);
 		tree->bt_num_nodes++;
 		zfs_btree_core_t *new_root =
-		    kmem_alloc(sizeof (zfs_btree_core_t) + BTREE_CORE_ELEMS *
+		    vmem_alloc(sizeof (zfs_btree_core_t) + BTREE_CORE_ELEMS *
 		    size, KM_SLEEP);
 		zfs_btree_hdr_t *new_root_hdr = &new_root->btc_hdr;
 		new_root_hdr->bth_parent = NULL;

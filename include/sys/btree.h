@@ -175,6 +175,12 @@ _Pragma("GCC diagnostic pop")
 void zfs_btree_init(void);
 void zfs_btree_fini(void);
 
+
+/*
+ * Swaps the contents of the two trees.
+ */
+void zfs_btree_swap (zfs_btree_t *, zfs_btree_t *);
+
 /*
  * Initialize an B-Tree. Arguments are:
  *
