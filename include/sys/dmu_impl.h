@@ -44,6 +44,8 @@
 extern "C" {
 #endif
 
+#define DIO_DONT_DESTROY "foobar"
+
 /*
  * This is the locking strategy for the DMU.  Numbers in parenthesis are
  * cases that use that lock order, referenced below:

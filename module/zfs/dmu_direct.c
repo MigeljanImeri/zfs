@@ -316,7 +316,7 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 	ASSERT(flags & DMU_DIRECTIO);
 
 	err = dmu_buf_hold_array_by_dnode(dn, offset,
-	    size, B_FALSE, FTAG, &numbufs, &dbp, flags);
+	    size, B_FALSE, DIO_DONT_DESTROY, &numbufs, &dbp, flags);
 	if (err)
 		return (err);
 
@@ -403,7 +403,7 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 		zio_nowait(cio);
 	}
 
-	dmu_buf_rele_array(dbp, numbufs, FTAG);
+	dmu_buf_rele_array(dbp, numbufs, DIO_DONT_DESTROY);
 
 	return (zio_wait(rio));
 }

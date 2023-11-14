@@ -4197,6 +4197,13 @@ dbuf_rele_and_unlock(dmu_buf_impl_t *db, const void *tag, boolean_t evicting)
 
 			dnode_rele(dn, db);
 		} else if (db->db_buf == NULL) {
+			if (tag != NULL) { 
+				if (!strcmp((char *) tag, DIO_DONT_DESTROY)) {
+					mutex_exit(&db->db_mtx);
+					return;
+				}
+			}
+
 			/*
 			 * This is a special case: we never associated this
 			 * dbuf with any data allocated from the ARC.
@@ -5111,7 +5118,8 @@ dbuf_write_done(zio_t *zio, arc_buf_t *buf, void *vdb)
 	ASSERT(db->db_dirtycnt > 0);
 	db->db_dirtycnt -= 1;
 	db->db_data_pending = NULL;
-	dbuf_rele_and_unlock(db, (void *)(uintptr_t)tx->tx_txg, B_FALSE);
+	//dbuf_rele_and_unlock(db, (void *)(uintptr_t)tx->tx_txg, B_FALSE);
+	dbuf_rele_and_unlock(db, FTAG, B_FALSE);
 
 	dsl_pool_undirty_space(dmu_objset_pool(os), dr->dr_accounted,
 	    zio->io_txg);
