@@ -374,12 +374,14 @@ dmu_read_abd(dnode_t *dn, uint64_t offset, uint64_t size,
 		if (zfs_dio_hole_punch_read == B_FALSE) {
 			mbuf = make_abd_for_dbuf(db, data, offset, size);
 			io_size = db->db.db_size;
+			zio_flags |= ZIO_FLAG_DIO_READ;
 		} else {
 			mbuf = data;
 			zio_flags |= ZIO_FLAG_DIO_HP_READ;
-			zio_flags |= ZIO_FLAG_DONT_QUEUE;
 			io_size = MIN(db->db.db_size, total_io);
 		}
+
+		zio_flags |= ZIO_FLAG_DONT_QUEUE;
 
 		ASSERT3P(mbuf, !=, NULL);
 		ASSERT3U(io_size, >, 0);

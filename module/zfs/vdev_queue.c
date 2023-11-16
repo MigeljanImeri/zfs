@@ -977,8 +977,12 @@ vdev_queue_io_done(zio_t *zio)
 
 	mutex_enter(&vq->vq_lock);
 
+	//if zio bypassed queue due to either being DIO hole punch read 
+	//or being a normal DIO read, don't try to remove from queue, 
+	//as its not there
 	if (!(zio->io_flags & ZIO_FLAG_DONT_QUEUE &&
-		zio->io_flags & ZIO_FLAG_DIO_HP_READ)) {
+		(zio->io_flags & ZIO_FLAG_DIO_READ || 
+		zio->io_flags & ZIO_FLAG_DIO_HP_READ))) {
 		vdev_queue_pending_remove(vq, zio);
 	}
 
