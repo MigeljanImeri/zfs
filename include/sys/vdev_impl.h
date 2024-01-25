@@ -462,6 +462,7 @@ struct vdev {
 	uint64_t	vdev_io_t;
 	uint64_t	vdev_slow_io_n;
 	uint64_t	vdev_slow_io_t;
+	uint64_t	vdev_bypass_queue;
 };
 
 #define	VDEV_PAD_SIZE		(8 << 10)

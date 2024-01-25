@@ -6008,6 +6008,13 @@ vdev_prop_set(vdev_t *vd, nvlist_t *innvl, nvlist_t *outnvl)
 			}
 			vd->vdev_slow_io_t = intval;
 			break;
+		case VDEV_PROP_BYPASS_QUEUE:
+			if (nvpair_value_uint64(elem, &intval) != 0) {
+				error = EINVAL;
+				break;
+			}
+			vd->vdev_bypass_queue = intval & 1;	
+			break;
 		default:
 			/* Most processing is done in vdev_props_set_sync */
 			break;
@@ -6364,6 +6371,20 @@ vdev_prop_get(vdev_t *vd, nvlist_t *innvl, nvlist_t *outnvl)
 
 				vdev_prop_add_list(outnvl, propname, NULL,
 				    intval, src);
+				break;
+			case VDEV_PROP_BYPASS_QUEUE:
+				err = vdev_prop_get_int(vd, prop, &intval);
+				if (err && err != ENOENT)
+					break;
+
+				if (intval == vdev_prop_default_numeric(prop))
+					src = ZPROP_SRC_DEFAULT;
+				else
+					src = ZPROP_SRC_LOCAL;
+
+				vdev_prop_add_list(outnvl, propname, NULL,
+				    intval, src);
+
 				break;
 			/* Text Properties */
 			case VDEV_PROP_COMMENT:

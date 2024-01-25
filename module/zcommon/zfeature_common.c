@@ -754,6 +754,10 @@ zpool_feature_init(void)
 	    "Support for raidz expansion",
 	    ZFEATURE_FLAG_MOS, ZFEATURE_TYPE_BOOLEAN, NULL, sfeatures);
 
+	zfeature_register(SPA_FEATURE_BYPASS_QUEUE,
+	    "org.openzfs:bypass_queue", "bypass_queue",
+	    "Bypass vdev queue", 0, ZFEATURE_TYPE_BOOLEAN, NULL, sfeatures);
+
 	zfs_mod_list_supported_free(sfeatures);
 }
 
