@@ -529,6 +529,7 @@ struct zio {
 	kmutex_t	io_lock;
 	kcondvar_t	io_cv;
 	int		io_allocator;
+	boolean_t 	io_complete;
 
 	/* FMA state */
 	zio_cksum_report_t *io_cksum_report;

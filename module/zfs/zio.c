@@ -973,6 +973,7 @@ zio_create(zio_t *pio, spa_t *spa, uint64_t txg, const blkptr_t *bp,
 	zio->io_orig_pipeline = zio->io_pipeline = pipeline;
 	zio->io_pipeline_trace = ZIO_STAGE_OPEN;
 	zio->io_allocator = ZIO_ALLOCATOR_NONE;
+	zio->io_complete = B_FALSE;
 
 	zio->io_state[ZIO_WAIT_READY] = (stage >= ZIO_STAGE_READY) ||
 	    (pipeline & ZIO_STAGE_READY) == 0;
@@ -4428,7 +4429,12 @@ zio_vdev_io_start(zio_t *zio)
 	}
 
 	vd->vdev_ops->vdev_op_io_start(zio);
-	return (NULL);
+	if (zio->io_complete == B_TRUE) {
+		return zio;
+	}
+	else {
+		return (NULL);
+	}
 }
 
 static zio_t *
