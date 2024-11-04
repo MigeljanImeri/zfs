@@ -946,7 +946,8 @@ vdev_queue_io(zio_t *zio)
 	zio->io_flags |= ZIO_FLAG_DONT_QUEUE;
 	zio->io_timestamp = gethrtime();
 
-	if (!zio->io_vd->vdev_queue_io) {
+	if (!zio->io_vd->vdev_queue_io &&
+	    (zio->io_flags & (ZIO_FLAG_DIO_READ | ZIO_FLAG_DIO_WRITE))) {
 		zio->io_queue_state = ZIO_QS_NONE;
 		return (zio);
 	}

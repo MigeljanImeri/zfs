@@ -666,6 +666,7 @@ typedef struct {
 
 	struct bio	*vbio_bio;	/* pointer to the current bio */
 	int		vbio_flags;	/* bio flags */
+	struct task_struct	*waiter; 
 } vbio_t;
 
 static vbio_t *
@@ -682,6 +683,7 @@ vbio_alloc(zio_t *zio, struct block_device *bdev, int flags)
 	vbio->vbio_offset = zio->io_offset;
 	vbio->vbio_bio = NULL;
 	vbio->vbio_flags = flags;
+	vbio->waiter = current;
 
 	return (vbio);
 }
@@ -819,7 +821,18 @@ vbio_completion(struct bio *bio)
 	kmem_free(vbio, sizeof (vbio_t));
 
 	/* All done, submit for processing */
-	zio_delay_interrupt(zio);
+	if (zio->io_flags & (ZIO_FLAG_DIO_READ | ZIO_FLAG_DIO_WRITE)) {
+		blk_wake_io_task(vbio->waiter);
+		/*
+		mutex_enter(&zio->io_lock);
+		cv_broadcast(&zio->io_cv);
+		mutex_exit(&zio->io_lock);
+		*/
+		zio->io_complete = B_TRUE;
+	}
+	else {
+		zio_delay_interrupt(zio);
+	}
 }
 
 /*
@@ -956,6 +969,12 @@ vdev_disk_io_rw(zio_t *zio)
 
 	/* Fill it with data pages and submit it to the kernel */
 	vbio_submit(vbio, abd, zio->io_size);
+
+	if (zio->io_flags & (ZIO_FLAG_DIO_READ | ZIO_FLAG_DIO_WRITE)) {
+		io_schedule();
+		//cv_wait_io(&zio->io_cv, &zio->io_lock);
+	}
+
 	return (0);
 }
 
@@ -979,6 +998,7 @@ typedef struct dio_request {
 	atomic_t		dr_ref;		/* References */
 	int			dr_error;	/* Bio error */
 	int			dr_bio_count;	/* Count of bio's */
+	struct task_struct	*waiter;
 	struct bio		*dr_bio[];	/* Attached bio's */
 } dio_request_t;
 
@@ -990,6 +1010,7 @@ vdev_classic_dio_alloc(int bio_count)
 	atomic_set(&dr->dr_ref, 0);
 	dr->dr_bio_count = bio_count;
 	dr->dr_error = 0;
+	dr->waiter = current;
 
 	for (int i = 0; i < dr->dr_bio_count; i++)
 		dr->dr_bio[i] = NULL;
@@ -1036,8 +1057,18 @@ vdev_classic_dio_put(dio_request_t *dr)
 			ASSERT3S(zio->io_error, >=, 0);
 			if (zio->io_error)
 				vdev_disk_error(zio);
-
-			zio_delay_interrupt(zio);
+			if (zio->io_flags & (ZIO_FLAG_DIO_READ | ZIO_FLAG_DIO_WRITE)) {
+				blk_wake_io_task(dr->waiter);
+				/*
+				mutex_enter(&zio->io_lock);
+				cv_broadcast(&zio->io_cv);
+				mutex_exit(&zio->io_lock);
+				*/
+				zio->io_complete = B_TRUE;
+			}
+			else {
+				zio_delay_interrupt(zio);
+			}
 		}
 	}
 }
@@ -1050,6 +1081,7 @@ vdev_classic_physio_completion(struct bio *bio)
 	if (dr->dr_error == 0) {
 		dr->dr_error = bi_status_to_errno(bio->bi_status);
 	}
+
 
 	/* Drop reference acquired by vdev_classic_physio */
 	vdev_classic_dio_put(dr);
@@ -1181,6 +1213,11 @@ retry:
 		blk_finish_plug(&plug);
 
 	vdev_classic_dio_put(dr);
+
+	if (dr->dr_zio->io_flags & (ZIO_FLAG_DIO_READ | ZIO_FLAG_DIO_WRITE)) {
+		io_schedule();
+		//cv_wait_io(&dr->dr_zio->io_cv, &dr->dr_zio->io_lock);
+	}
 
 	return (error);
 }
