@@ -724,7 +724,7 @@ vdev_alloc_common(spa_t *spa, uint_t id, uint64_t guid, vdev_ops_t *ops)
 	list_link_init(&vd->vdev_leaf_node);
 	list_link_init(&vd->vdev_trim_node);
 
-	mutex_init(&vd->vdev_dtl_lock, NULL, MUTEX_NOLOCKDEP, NULL);
+	rw_init(&vd->vdev_dtl_lock, NULL, RW_DEFAULT, NULL);
 	mutex_init(&vd->vdev_stat_lock, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&vd->vdev_probe_lock, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&vd->vdev_scan_io_queue_lock, NULL, MUTEX_DEFAULT, NULL);
@@ -1166,13 +1166,13 @@ vdev_free(vdev_t *vd)
 	txg_list_destroy(&vd->vdev_ms_list);
 	txg_list_destroy(&vd->vdev_dtl_list);
 
-	mutex_enter(&vd->vdev_dtl_lock);
+	rw_enter(&vd->vdev_dtl_lock, RW_WRITER);
 	space_map_close(vd->vdev_dtl_sm);
 	for (int t = 0; t < DTL_TYPES; t++) {
 		zfs_range_tree_vacate(vd->vdev_dtl[t], NULL, NULL);
 		zfs_range_tree_destroy(vd->vdev_dtl[t]);
 	}
-	mutex_exit(&vd->vdev_dtl_lock);
+	rw_exit(&vd->vdev_dtl_lock);
 
 	EQUIV(vd->vdev_indirect_births != NULL,
 	    vd->vdev_indirect_mapping != NULL);
@@ -1191,7 +1191,7 @@ vdev_free(vdev_t *vd)
 	rw_destroy(&vd->vdev_indirect_rwlock);
 	mutex_destroy(&vd->vdev_obsolete_lock);
 
-	mutex_destroy(&vd->vdev_dtl_lock);
+	rw_destroy(&vd->vdev_dtl_lock);
 	mutex_destroy(&vd->vdev_stat_lock);
 	mutex_destroy(&vd->vdev_probe_lock);
 	mutex_destroy(&vd->vdev_scan_io_queue_lock);
@@ -3012,10 +3012,10 @@ vdev_dtl_dirty(vdev_t *vd, vdev_dtl_type_t t, uint64_t txg, uint64_t size)
 	ASSERT(vd != vd->vdev_spa->spa_root_vdev);
 	ASSERT(spa_writeable(vd->vdev_spa));
 
-	mutex_enter(&vd->vdev_dtl_lock);
+	rw_enter(&vd->vdev_dtl_lock, RW_WRITER);
 	if (!zfs_range_tree_contains(rt, txg, size))
 		zfs_range_tree_add(rt, txg, size);
-	mutex_exit(&vd->vdev_dtl_lock);
+	rw_exit(&vd->vdev_dtl_lock);
 }
 
 boolean_t
@@ -3035,10 +3035,10 @@ vdev_dtl_contains(vdev_t *vd, vdev_dtl_type_t t, uint64_t txg, uint64_t size)
 	 * Note that while importing we are only reading the MOS, which is
 	 * always checksummed.
 	 */
-	mutex_enter(&vd->vdev_dtl_lock);
+	rw_enter(&vd->vdev_dtl_lock, RW_READER);
 	if (!zfs_range_tree_is_empty(rt))
 		dirty = zfs_range_tree_contains(rt, txg, size);
-	mutex_exit(&vd->vdev_dtl_lock);
+	rw_exit(&vd->vdev_dtl_lock);
 
 	return (dirty);
 }
@@ -3049,9 +3049,9 @@ vdev_dtl_empty(vdev_t *vd, vdev_dtl_type_t t)
 	zfs_range_tree_t *rt = vd->vdev_dtl[t];
 	boolean_t empty;
 
-	mutex_enter(&vd->vdev_dtl_lock);
+	rw_enter(&vd->vdev_dtl_lock, RW_READER);
 	empty = zfs_range_tree_is_empty(rt);
-	mutex_exit(&vd->vdev_dtl_lock);
+	rw_exit(&vd->vdev_dtl_lock);
 
 	return (empty);
 }
@@ -3096,7 +3096,7 @@ vdev_dtl_need_resilver(vdev_t *vd, const dva_t *dva, size_t psize,
 static uint64_t
 vdev_dtl_min(vdev_t *vd)
 {
-	ASSERT(MUTEX_HELD(&vd->vdev_dtl_lock));
+	ASSERT(RW_LOCK_HELD(&vd->vdev_dtl_lock));
 	ASSERT3U(zfs_range_tree_space(vd->vdev_dtl[DTL_MISSING]), !=, 0);
 	ASSERT0(vd->vdev_children);
 
@@ -3109,7 +3109,7 @@ vdev_dtl_min(vdev_t *vd)
 static uint64_t
 vdev_dtl_max(vdev_t *vd)
 {
-	ASSERT(MUTEX_HELD(&vd->vdev_dtl_lock));
+	ASSERT(RW_LOCK_HELD(&vd->vdev_dtl_lock));
 	ASSERT3U(zfs_range_tree_space(vd->vdev_dtl[DTL_MISSING]), !=, 0);
 	ASSERT0(vd->vdev_children);
 
@@ -3211,7 +3211,7 @@ vdev_dtl_reassess_impl(vdev_t *vd, uint64_t txg, uint64_t scrub_txg,
 		boolean_t check_excise = B_FALSE;
 		boolean_t wasempty = B_TRUE;
 
-		mutex_enter(&vd->vdev_dtl_lock);
+		rw_enter(&vd->vdev_dtl_lock, RW_WRITER);
 
 		/*
 		 * If requested, pretend the scan or rebuild completed cleanly.
@@ -3329,12 +3329,12 @@ vdev_dtl_reassess_impl(vdev_t *vd, uint64_t txg, uint64_t scrub_txg,
 			}
 		}
 
-		mutex_exit(&vd->vdev_dtl_lock);
+		rw_exit(&vd->vdev_dtl_lock);
 
 		if (txg != 0)
 			vdev_dirty(vd->vdev_top, VDD_DTL, vd, txg);
 	} else {
-		mutex_enter(&vd->vdev_dtl_lock);
+		rw_enter(&vd->vdev_dtl_lock, RW_WRITER);
 		for (int t = 0; t < DTL_TYPES; t++) {
 			/* account for child's outage in parent's missing map */
 			int s = (t == DTL_MISSING) ? DTL_OUTAGE: t;
@@ -3355,16 +3355,16 @@ vdev_dtl_reassess_impl(vdev_t *vd, uint64_t txg, uint64_t scrub_txg,
 			space_reftree_create(&reftree);
 			for (int c = 0; c < vd->vdev_children; c++) {
 				vdev_t *cvd = vd->vdev_child[c];
-				mutex_enter(&cvd->vdev_dtl_lock);
+				rw_enter(&cvd->vdev_dtl_lock, RW_WRITER);
 				space_reftree_add_map(&reftree,
 				    cvd->vdev_dtl[s], 1);
-				mutex_exit(&cvd->vdev_dtl_lock);
+				rw_exit(&cvd->vdev_dtl_lock);
 			}
 			space_reftree_generate_map(&reftree,
 			    vd->vdev_dtl[t], minref);
 			space_reftree_destroy(&reftree);
 		}
-		mutex_exit(&vd->vdev_dtl_lock);
+		rw_exit(&vd->vdev_dtl_lock);
 	}
 
 	if (vd->vdev_top->vdev_ops == &vdev_raidz_ops) {
@@ -3434,10 +3434,10 @@ vdev_dtl_load(vdev_t *vd)
 		rt = zfs_range_tree_create(NULL, ZFS_RANGE_SEG64, NULL, 0, 0);
 		error = space_map_load(vd->vdev_dtl_sm, rt, SM_ALLOC);
 		if (error == 0) {
-			mutex_enter(&vd->vdev_dtl_lock);
+			rw_enter(&vd->vdev_dtl_lock, RW_WRITER);
 			zfs_range_tree_walk(rt, zfs_range_tree_add,
 			    vd->vdev_dtl[DTL_MISSING]);
-			mutex_exit(&vd->vdev_dtl_lock);
+			rw_exit(&vd->vdev_dtl_lock);
 		}
 
 		zfs_range_tree_vacate(rt, NULL, NULL);
@@ -3547,11 +3547,11 @@ vdev_dtl_sync(vdev_t *vd, uint64_t txg)
 	tx = dmu_tx_create_assigned(spa->spa_dsl_pool, txg);
 
 	if (vd->vdev_detached || vd->vdev_top->vdev_removing) {
-		mutex_enter(&vd->vdev_dtl_lock);
+		rw_enter(&vd->vdev_dtl_lock, RW_WRITER);
 		space_map_free(vd->vdev_dtl_sm, tx);
 		space_map_close(vd->vdev_dtl_sm);
 		vd->vdev_dtl_sm = NULL;
-		mutex_exit(&vd->vdev_dtl_lock);
+		rw_exit(&vd->vdev_dtl_lock);
 
 		/*
 		 * We only destroy the leaf ZAP for detached leaves or for
@@ -3581,9 +3581,9 @@ vdev_dtl_sync(vdev_t *vd, uint64_t txg)
 
 	rtsync = zfs_range_tree_create(NULL, ZFS_RANGE_SEG64, NULL, 0, 0);
 
-	mutex_enter(&vd->vdev_dtl_lock);
+	rw_enter(&vd->vdev_dtl_lock, RW_WRITER);
 	zfs_range_tree_walk(rt, zfs_range_tree_add, rtsync);
-	mutex_exit(&vd->vdev_dtl_lock);
+	rw_exit(&vd->vdev_dtl_lock);
 
 	space_map_truncate(vd->vdev_dtl_sm, zfs_vdev_dtl_sm_blksz, tx);
 	space_map_write(vd->vdev_dtl_sm, rtsync, SM_ALLOC, SM_NO_VDEVID, tx);
@@ -3658,7 +3658,7 @@ vdev_resilver_needed(vdev_t *vd, uint64_t *minp, uint64_t *maxp)
 	uint64_t thismax = 0;
 
 	if (vd->vdev_children == 0) {
-		mutex_enter(&vd->vdev_dtl_lock);
+		rw_enter(&vd->vdev_dtl_lock, RW_READER);
 		if (!zfs_range_tree_is_empty(vd->vdev_dtl[DTL_MISSING]) &&
 		    vdev_writeable(vd)) {
 
@@ -3666,7 +3666,7 @@ vdev_resilver_needed(vdev_t *vd, uint64_t *minp, uint64_t *maxp)
 			thismax = vdev_dtl_max(vd);
 			needed = B_TRUE;
 		}
-		mutex_exit(&vd->vdev_dtl_lock);
+		rw_exit(&vd->vdev_dtl_lock);
 	} else {
 		for (int c = 0; c < vd->vdev_children; c++) {
 			vdev_t *cvd = vd->vdev_child[c];

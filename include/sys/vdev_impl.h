@@ -440,7 +440,7 @@ struct vdev {
 	 * larger in userland, the offsets for the rest of the fields would be
 	 * incorrect.
 	 */
-	kmutex_t	vdev_dtl_lock;	/* vdev_dtl_{map,resilver}	*/
+	krwlock_t	vdev_dtl_lock;	/* vdev_dtl_{map,resilver}	*/
 	kmutex_t	vdev_stat_lock;	/* vdev_stat			*/
 	kmutex_t	vdev_probe_lock; /* protects vdev_probe_zio	*/
 
