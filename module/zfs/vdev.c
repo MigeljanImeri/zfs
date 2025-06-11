@@ -777,7 +777,7 @@ vdev_alloc_common(spa_t *spa, uint_t id, uint64_t guid, vdev_ops_t *ops)
 	list_link_init(&vd->vdev_trim_node);
 
 	mutex_init(&vd->vdev_dtl_lock, NULL, MUTEX_NOLOCKDEP, NULL);
-	mutex_init(&vd->vdev_stat_lock, NULL, MUTEX_DEFAULT, NULL);
+	rw_init(&vd->vdev_stat_lock, NULL, RW_DEFAULT, NULL);
 	mutex_init(&vd->vdev_probe_lock, NULL, MUTEX_DEFAULT, NULL);
 	mutex_init(&vd->vdev_scan_io_queue_lock, NULL, MUTEX_DEFAULT, NULL);
 
@@ -1271,7 +1271,7 @@ vdev_free(vdev_t *vd)
 	mutex_destroy(&vd->vdev_obsolete_lock);
 
 	mutex_destroy(&vd->vdev_dtl_lock);
-	mutex_destroy(&vd->vdev_stat_lock);
+	rw_destroy(&vd->vdev_stat_lock);
 	mutex_destroy(&vd->vdev_probe_lock);
 	mutex_destroy(&vd->vdev_scan_io_queue_lock);
 
@@ -5198,7 +5198,7 @@ void
 vdev_get_stats_ex(vdev_t *vd, vdev_stat_t *vs, vdev_stat_ex_t *vsx)
 {
 	vdev_t *tvd = vd->vdev_top;
-	mutex_enter(&vd->vdev_stat_lock);
+	rw_enter(&vd->vdev_stat_lock, RW_WRITER);
 	if (vs) {
 		memcpy(vs, &vd->vdev_stat, sizeof (*vs));
 		vs->vs_timestamp = gethrtime() - vs->vs_timestamp;
@@ -5277,7 +5277,7 @@ vdev_get_stats_ex(vdev_t *vd, vdev_stat_t *vs, vdev_stat_ex_t *vsx)
 	}
 
 	vdev_get_stats_ex_impl(vd, vs, vsx);
-	mutex_exit(&vd->vdev_stat_lock);
+	rw_exit(&vd->vdev_stat_lock);
 }
 
 void
@@ -5289,11 +5289,11 @@ vdev_get_stats(vdev_t *vd, vdev_stat_t *vs)
 void
 vdev_clear_stats(vdev_t *vd)
 {
-	mutex_enter(&vd->vdev_stat_lock);
-	vd->vdev_stat.vs_space = 0;
-	vd->vdev_stat.vs_dspace = 0;
-	vd->vdev_stat.vs_alloc = 0;
-	mutex_exit(&vd->vdev_stat_lock);
+	rw_enter(&vd->vdev_stat_lock, RW_READER);
+	atomic_store_64(&vd->vdev_stat.vs_space, 0);
+	atomic_store_64(&vd->vdev_stat.vs_dspace, 0);
+	atomic_store_64(&vd->vdev_stat.vs_alloc, 0);
+	rw_exit(&vd->vdev_stat_lock);
 }
 
 void
@@ -5304,9 +5304,9 @@ vdev_scan_stat_init(vdev_t *vd)
 	for (int c = 0; c < vd->vdev_children; c++)
 		vdev_scan_stat_init(vd->vdev_child[c]);
 
-	mutex_enter(&vd->vdev_stat_lock);
-	vs->vs_scan_processed = 0;
-	mutex_exit(&vd->vdev_stat_lock);
+	rw_enter(&vd->vdev_stat_lock, RW_READER);
+	atomic_store_64(&vs->vs_scan_processed, 0);
+	rw_exit(&vd->vdev_stat_lock);
 }
 
 void
@@ -5357,7 +5357,7 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 		if (flags & ZIO_FLAG_IO_BYPASS)
 			return;
 
-		mutex_enter(&vd->vdev_stat_lock);
+		rw_enter(&vd->vdev_stat_lock, RW_READER);
 
 		if (flags & ZIO_FLAG_IO_REPAIR) {
 			/*
@@ -5371,7 +5371,7 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 
 				if (vd->vdev_ops->vdev_op_leaf)
 					atomic_add_64(processed, psize);
-				vs->vs_scan_processed += psize;
+				atomic_add_64(&vs->vs_scan_processed, psize);
 			}
 
 			/*
@@ -5390,11 +5390,11 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 				    vd->vdev_ops != &vdev_draid_spare_ops) {
 					atomic_add_64(rebuilt, psize);
 				}
-				vs->vs_rebuild_processed += psize;
+				atomic_add_64(&vs->vs_rebuild_processed, psize);
 			}
 
 			if (flags & ZIO_FLAG_SELF_HEAL)
-				vs->vs_self_healed += psize;
+				atomic_add_64(&vs->vs_self_healed, psize);
 		}
 
 		/*
@@ -5436,28 +5436,28 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 				    ZIO_PRIORITY_ASYNC_READ);
 			}
 
-			vs->vs_ops[vs_type]++;
-			vs->vs_bytes[vs_type] += psize;
+			atomic_inc_64(&vs->vs_ops[vs_type]);
+			atomic_add_64(&vs->vs_bytes[vs_type], psize);
 
 			if (flags & ZIO_FLAG_DELEGATED) {
-				vsx->vsx_agg_histo[priority]
-				    [RQ_HISTO(zio->io_size)]++;
+				atomic_inc_64(&vsx->vsx_agg_histo[priority]
+				    [RQ_HISTO(zio->io_size)]);
 			} else {
-				vsx->vsx_ind_histo[priority]
-				    [RQ_HISTO(zio->io_size)]++;
+				atomic_inc_64(&vsx->vsx_ind_histo[priority]
+				    [RQ_HISTO(zio->io_size)]);
 			}
 
 			if (zio->io_delta && zio->io_delay) {
-				vsx->vsx_queue_histo[priority]
-				    [L_HISTO(zio->io_delta - zio->io_delay)]++;
-				vsx->vsx_disk_histo[type]
-				    [L_HISTO(zio->io_delay)]++;
-				vsx->vsx_total_histo[type]
-				    [L_HISTO(zio->io_delta)]++;
+				atomic_inc_64(&vsx->vsx_queue_histo[priority]
+				    [L_HISTO(zio->io_delta - zio->io_delay)]);
+				atomic_inc_64(&vsx->vsx_disk_histo[type]
+				    [L_HISTO(zio->io_delay)]);
+				atomic_inc_64(&vsx->vsx_total_histo[type]
+				    [L_HISTO(zio->io_delta)]);
 			}
 		}
 
-		mutex_exit(&vd->vdev_stat_lock);
+		rw_exit(&vd->vdev_stat_lock);
 		return;
 	}
 
@@ -5569,25 +5569,25 @@ vdev_space_update(vdev_t *vd, int64_t alloc_delta, int64_t defer_delta,
 	 */
 	dspace_delta = vdev_deflated_space(vd, space_delta);
 
-	mutex_enter(&vd->vdev_stat_lock);
+	rw_enter(&vd->vdev_stat_lock, RW_READER);
 	/* ensure we won't underflow */
 	if (alloc_delta < 0) {
 		ASSERT3U(vd->vdev_stat.vs_alloc, >=, -alloc_delta);
 	}
 
-	vd->vdev_stat.vs_alloc += alloc_delta;
-	vd->vdev_stat.vs_space += space_delta;
-	vd->vdev_stat.vs_dspace += dspace_delta;
-	mutex_exit(&vd->vdev_stat_lock);
+	atomic_add_64(&vd->vdev_stat.vs_alloc, alloc_delta);
+	atomic_add_64(&vd->vdev_stat.vs_space, space_delta);
+	atomic_add_64(&vd->vdev_stat.vs_dspace, dspace_delta);
+	rw_exit(&vd->vdev_stat_lock);
 
 	/* every class but log contributes to root space stats */
 	if (vd->vdev_mg != NULL && !vd->vdev_islog) {
 		ASSERT(!vd->vdev_isl2cache);
-		mutex_enter(&rvd->vdev_stat_lock);
-		rvd->vdev_stat.vs_alloc += alloc_delta;
-		rvd->vdev_stat.vs_space += space_delta;
-		rvd->vdev_stat.vs_dspace += dspace_delta;
-		mutex_exit(&rvd->vdev_stat_lock);
+		rw_enter(&rvd->vdev_stat_lock, RW_READER);
+		atomic_add_64(&vd->vdev_stat.vs_alloc, alloc_delta);
+		atomic_add_64(&rvd->vdev_stat.vs_space, space_delta);
+		atomic_add_64(&rvd->vdev_stat.vs_dspace, dspace_delta);
+		rw_exit(&rvd->vdev_stat_lock);
 	}
 	/* Note: metaslab_class_space_update moved to metaslab_space_update */
 }

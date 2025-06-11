@@ -5737,9 +5737,9 @@ zio_checksum_verify(zio_t *zio)
 					zio_dio_chksum_verify_error_report(zio);
 				}
 			} else {
-				mutex_enter(&zio->io_vd->vdev_stat_lock);
-				zio->io_vd->vdev_stat.vs_checksum_errors++;
-				mutex_exit(&zio->io_vd->vdev_stat_lock);
+				rw_enter(&zio->io_vd->vdev_stat_lock, RW_READER);
+				atomic_inc_64(&zio->io_vd->vdev_stat.vs_checksum_errors);
+				rw_exit(&zio->io_vd->vdev_stat_lock);
 				(void) zfs_ereport_start_checksum(zio->io_spa,
 				    zio->io_vd, &zio->io_bookmark, zio,
 				    zio->io_offset, zio->io_size, &info);
@@ -5799,9 +5799,9 @@ zio_dio_chksum_verify_error_report(zio_t *zio)
 	if (zio->io_child_type == ZIO_CHILD_LOGICAL)
 		return;
 
-	mutex_enter(&zio->io_vd->vdev_stat_lock);
-	zio->io_vd->vdev_stat.vs_dio_verify_errors++;
-	mutex_exit(&zio->io_vd->vdev_stat_lock);
+	rw_enter(&zio->io_vd->vdev_stat_lock, RW_READER);
+	atomic_inc_64(&zio->io_vd->vdev_stat.vs_dio_verify_errors);
+	rw_exit(&zio->io_vd->vdev_stat_lock);
 	if (zio->io_type == ZIO_TYPE_WRITE) {
 		/*
 		 * Convert checksum error for writes into EIO.
@@ -6145,10 +6145,9 @@ zio_done(zio_t *zio)
 			 */
 			if (zfs_ereport_is_valid(FM_EREPORT_ZFS_DELAY,
 			    zio->io_spa, zio->io_vd, zio)) {
-				mutex_enter(&zio->io_vd->vdev_stat_lock);
-				zio->io_vd->vdev_stat.vs_slow_ios++;
-				mutex_exit(&zio->io_vd->vdev_stat_lock);
-
+				rw_enter(&zio->io_vd->vdev_stat_lock, RW_READER);
+				atomic_inc_64(&zio->io_vd->vdev_stat.vs_slow_ios);
+				rw_exit(&zio->io_vd->vdev_stat_lock);
 				if (zio->io_vd->vdev_slow_io_events) {
 					(void) zfs_ereport_post(
 					    FM_EREPORT_ZFS_DELAY,
@@ -6172,12 +6171,12 @@ zio_done(zio_t *zio)
 			int ret = zfs_ereport_post(FM_EREPORT_ZFS_IO,
 			    zio->io_spa, zio->io_vd, &zio->io_bookmark, zio, 0);
 			if (ret != EALREADY) {
-				mutex_enter(&zio->io_vd->vdev_stat_lock);
+				rw_enter(&zio->io_vd->vdev_stat_lock, RW_READER);
 				if (zio->io_type == ZIO_TYPE_READ)
-					zio->io_vd->vdev_stat.vs_read_errors++;
+					atomic_inc_64(&zio->io_vd->vdev_stat.vs_read_errors);
 				else if (zio->io_type == ZIO_TYPE_WRITE)
-					zio->io_vd->vdev_stat.vs_write_errors++;
-				mutex_exit(&zio->io_vd->vdev_stat_lock);
+					atomic_inc_64(&zio->io_vd->vdev_stat.vs_write_errors);
+				rw_exit(&zio->io_vd->vdev_stat_lock);
 			}
 		}
 

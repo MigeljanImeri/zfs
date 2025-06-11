@@ -2910,9 +2910,9 @@ vdev_raidz_checksum_error(zio_t *zio, raidz_col_t *rc, abd_t *bad_data)
 		zbc.zbc_has_cksum = 0;
 		zbc.zbc_injected = rm->rm_ecksuminjected;
 
-		mutex_enter(&vd->vdev_stat_lock);
-		vd->vdev_stat.vs_checksum_errors++;
-		mutex_exit(&vd->vdev_stat_lock);
+		rw_enter(&vd->vdev-stat_lock, RW_READER);
+		atomic_inc_64(&vd->vdev_stat.vs_checksum_errors);
+		rw_exit(&vd->vdev_stat_lock);
 		(void) zfs_ereport_post_checksum(zio->io_spa, vd,
 		    &zio->io_bookmark, zio, rc->rc_offset, rc->rc_size,
 		    rc->rc_abd, bad_data, &zbc);
@@ -3087,9 +3087,9 @@ vdev_raidz_sit_child(vdev_t *svd, uint64_t secs)
 	    secs;
 
 	/* Count each slow io period */
-	mutex_enter(&svd->vdev_stat_lock);
-	svd->vdev_stat.vs_slow_ios++;
-	mutex_exit(&svd->vdev_stat_lock);
+	rw_enter(&svd->vdev_stat_lock, RW_READER);
+	atomic_inc_64(&svd->vdev_stat.vs_slow_ios);
+	rw_exit(&svd->vdev_stat_lock);
 }
 
 void
@@ -3149,14 +3149,14 @@ vdev_child_slow_outlier(zio_t *zio)
 	for (int c = 0; c < children; c++) {
 		vdev_t *cvd = vd->vdev_child[c];
 		if (cvd->vdev_prev_histo == NULL) {
-			mutex_enter(&cvd->vdev_stat_lock);
+			rw_enter(&cvd->vdev_stat_lock, RW_WRITER);
 			size_t size =
 			    sizeof (cvd->vdev_stat_ex.vsx_disk_histo[0]);
 			cvd->vdev_prev_histo = kmem_zalloc(size, KM_SLEEP);
 			memcpy(cvd->vdev_prev_histo,
 			    cvd->vdev_stat_ex.vsx_disk_histo[ZIO_TYPE_READ],
 			    size);
-			mutex_exit(&cvd->vdev_stat_lock);
+			rw_exit(&cvd->vdev_stat_lock);
 		}
 	}
 	uint64_t max = 0;
@@ -3172,7 +3172,7 @@ vdev_child_slow_outlier(zio_t *zio)
 		if (sitting && ++sitouts >= vdev_get_nparity(vd))
 			skip = B_TRUE;
 
-		mutex_enter(&cvd->vdev_stat_lock);
+		rw_enter(&cvd->vdev_stat_lock, RW_WRITER);
 
 		uint64_t *prev_histo = cvd->vdev_prev_histo;
 		uint64_t *histo =
@@ -3181,7 +3181,7 @@ vdev_child_slow_outlier(zio_t *zio)
 			size_t size =
 			    sizeof (cvd->vdev_stat_ex.vsx_disk_histo[0]);
 			memcpy(prev_histo, histo, size);
-			mutex_exit(&cvd->vdev_stat_lock);
+			rw_exit(&cvd->vdev_stat_lock);
 			continue;
 		}
 		uint64_t count = 0;
@@ -3193,7 +3193,7 @@ vdev_child_slow_outlier(zio_t *zio)
 		}
 		size_t size = sizeof (cvd->vdev_stat_ex.vsx_disk_histo[0]);
 		memcpy(prev_histo, histo, size);
-		mutex_exit(&cvd->vdev_stat_lock);
+		rw_exit(&cvd->vdev_stat_lock);
 		lat_data[c] /= MAX(1, count);
 
 		/* Wait until all disks have been read from */
@@ -3991,9 +3991,9 @@ vdev_raidz_io_done_unrecoverable(zio_t *zio)
 			zio_bad_cksum_t zbc;
 			zbc.zbc_has_cksum = 0;
 			zbc.zbc_injected = rm->rm_ecksuminjected;
-			mutex_enter(&cvd->vdev_stat_lock);
-			cvd->vdev_stat.vs_checksum_errors++;
-			mutex_exit(&cvd->vdev_stat_lock);
+			rw_enter(&cvd->vdev_stat_lock, RW_READER);
+			atomic_inc_64(&cvd->vdev_stat.vs_checksum_errors);
+			rw_exit(&cvd->vdev_stat_lock);
 			(void) zfs_ereport_start_checksum(zio->io_spa,
 			    cvd, &zio->io_bookmark, zio, rc->rc_offset,
 			    rc->rc_size, &zbc);

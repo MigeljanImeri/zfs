@@ -140,9 +140,9 @@ clear_rebuild_bytes(vdev_t *vd)
 	for (uint64_t i = 0; i < vd->vdev_children; i++)
 		clear_rebuild_bytes(vd->vdev_child[i]);
 
-	mutex_enter(&vd->vdev_stat_lock);
-	vs->vs_rebuild_processed = 0;
-	mutex_exit(&vd->vdev_stat_lock);
+	rw_enter(&vd->vdev_stat_lock, RW_READER);
+	atomic_store_64(&vs->vs_rebuild_processed, 0);
+	rw_exit(&vd->vdev_stat_lock);
 }
 
 /*

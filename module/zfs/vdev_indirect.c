@@ -1393,9 +1393,9 @@ vdev_indirect_checksum_error(zio_t *zio,
 	if (zio->io_flags & ZIO_FLAG_SPECULATIVE)
 		return;
 
-	mutex_enter(&vd->vdev_stat_lock);
-	vd->vdev_stat.vs_checksum_errors++;
-	mutex_exit(&vd->vdev_stat_lock);
+	rw_enter(&vd->vdev_stat_lock, RW_READER);
+	atomic_inc_64(&vd->vdev_stat.vs_checksum_errors);
+	rw_exit(&vd->vdev_stat_lock);
 
 	zio_bad_cksum_t zbc = { 0 };
 	abd_t *bad_abd = ic->ic_data;
@@ -1478,9 +1478,9 @@ vdev_indirect_all_checksum_errors(zio_t *zio)
 
 			vdev_t *vd = ic->ic_vdev;
 
-			mutex_enter(&vd->vdev_stat_lock);
-			vd->vdev_stat.vs_checksum_errors++;
-			mutex_exit(&vd->vdev_stat_lock);
+			rw_enter(&vd->vdev_stat_lock, RW_READER);
+			atomic_inc_64(&vd->vdev_stat.vs_checksum_errors);
+			rw_exit(&vd->vdev_stat_lock);
 			(void) zfs_ereport_post_checksum(zio->io_spa, vd,
 			    NULL, zio, is->is_target_offset, is->is_size,
 			    NULL, NULL, NULL);
