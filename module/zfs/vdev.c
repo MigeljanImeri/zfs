@@ -4973,8 +4973,6 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 		if (flags & ZIO_FLAG_IO_BYPASS)
 			return;
 
-		mutex_enter(&vd->vdev_stat_lock);
-
 		if (flags & ZIO_FLAG_IO_REPAIR) {
 			/*
 			 * Repair is the result of a resilver issued by the
@@ -4987,7 +4985,7 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 
 				if (vd->vdev_ops->vdev_op_leaf)
 					atomic_add_64(processed, psize);
-				vs->vs_scan_processed += psize;
+				atomic_add_64(&vs->vs_scan_processed, psize);
 			}
 
 			/*
@@ -5006,11 +5004,11 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 				    vd->vdev_ops != &vdev_draid_spare_ops) {
 					atomic_add_64(rebuilt, psize);
 				}
-				vs->vs_rebuild_processed += psize;
+				atomic_add_64(&vs->vs_rebuild_processed, psize);
 			}
 
 			if (flags & ZIO_FLAG_SELF_HEAL)
-				vs->vs_self_healed += psize;
+				atomic_add_64(&vs->vs_self_healed, psize);
 		}
 
 		/*
@@ -5052,28 +5050,27 @@ vdev_stat_update(zio_t *zio, uint64_t psize)
 				    ZIO_PRIORITY_ASYNC_READ);
 			}
 
-			vs->vs_ops[vs_type]++;
-			vs->vs_bytes[vs_type] += psize;
+			atomic_inc_64(&vs->vs_ops[vs_type]);
+			atomic_add_64(&vs->vs_bytes[vs_type], psize);
 
 			if (flags & ZIO_FLAG_DELEGATED) {
-				vsx->vsx_agg_histo[priority]
-				    [RQ_HISTO(zio->io_size)]++;
+				atomic_inc_64(&vsx->vsx_agg_histo[priority]
+				    [RQ_HISTO(zio->io_size)]);
 			} else {
-				vsx->vsx_ind_histo[priority]
-				    [RQ_HISTO(zio->io_size)]++;
+				atomic_inc_64(&vsx->vsx_ind_histo[priority]
+				    [RQ_HISTO(zio->io_size)]);
 			}
 
 			if (zio->io_delta && zio->io_delay) {
-				vsx->vsx_queue_histo[priority]
-				    [L_HISTO(zio->io_delta - zio->io_delay)]++;
-				vsx->vsx_disk_histo[type]
-				    [L_HISTO(zio->io_delay)]++;
-				vsx->vsx_total_histo[type]
-				    [L_HISTO(zio->io_delta)]++;
+				atomic_inc_64(&vsx->vsx_queue_histo[priority]
+				    [L_HISTO(zio->io_delta - zio->io_delay)]);
+				atomic_inc_64(&vsx->vsx_disk_histo[type]
+				    [L_HISTO(zio->io_delay)]);
+				atomic_inc_64(&vsx->vsx_total_histo[type]
+				    [L_HISTO(zio->io_delta)]);
 			}
 		}
 
-		mutex_exit(&vd->vdev_stat_lock);
 		return;
 	}
 
