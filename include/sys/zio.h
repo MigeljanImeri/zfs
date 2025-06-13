@@ -453,6 +453,12 @@ enum zio_qstate {
 	ZIO_QS_ACTIVE,
 };
 
+enum zio_bstate {
+	ZIO_BS_NONE = 0,
+	ZIO_BS_WAITING,
+	ZIO_BS_DONE,
+};
+
 struct zio {
 	/* Core information about this I/O */
 	zbookmark_phys_t	io_bookmark;
@@ -530,6 +536,8 @@ struct zio {
 	kmutex_t	io_lock;
 	kcondvar_t	io_cv;
 	int		io_allocator;
+
+	enum zio_bstate	io_complete;
 
 	/* FMA state */
 	zio_cksum_report_t *io_cksum_report;
