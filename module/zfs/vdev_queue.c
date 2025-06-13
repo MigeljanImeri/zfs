@@ -957,6 +957,11 @@ vdev_queue_io_done(zio_t *zio)
 	mutex_enter(&vq->vq_lock);
 	vdev_queue_pending_remove(vq, zio);
 
+	if (zio->io_complete == ZIO_BS_DONE) {
+		mutex_exit(&vq->vq_lock);
+		return;
+	}
+
 	while ((nio = vdev_queue_io_to_issue(vq)) != NULL) {
 		mutex_exit(&vq->vq_lock);
 		if (nio->io_done == vdev_queue_agg_io_done) {
