@@ -106,6 +106,8 @@ static uint_t zfs_vdev_open_timeout_ms = 1000;
 
 static unsigned int zfs_vdev_failfast_mask = 1;
 
+static unsigned int zfs_vdev_disk_calling_thread_io = 1;
+
 /*
  * Convert SPA mode flags into bdev open mode flags.
  */
@@ -604,6 +606,15 @@ vdev_submit_bio(struct bio *bio)
 	current->bio_list = bio_list;
 }
 
+static inline void
+vdev_submit_bio_wait(struct bio *bio)
+{
+	struct bio_list *bio_list = current->bio_list;
+	current->bio_list = NULL;
+	(void) submit_bio_wait(bio);
+	current->bio_list = bio_list;
+}
+
 static inline struct bio *
 vdev_bio_alloc(struct block_device *bdev, gfp_t gfp_mask,
     unsigned short nr_vecs)
@@ -788,7 +799,15 @@ vbio_submit(vbio_t *vbio, abd_t *abd, uint64_t size)
 	 * called and free the vbio before this task is run again, so we must
 	 * consider it invalid from this point.
 	 */
-	vdev_submit_bio(vbio->vbio_bio);
+
+	zio_t *zio = vbio->vbio_zio;
+	if (zfs_vdev_disk_calling_thread_io &&
+	    (zio->io_flags & ZIO_FLAG_BYPASSED_QUEUE)) {
+		zio->io_complete = ZIO_BS_WAITING;
+		vdev_submit_bio_wait(vbio->vbio_bio);
+	} else {
+		vdev_submit_bio(vbio->vbio_bio);
+	}
 
 	blk_finish_plug(&plug);
 }
@@ -819,6 +838,10 @@ vbio_completion(struct bio *bio)
 	 */
 	ASSERT0P(zio->io_bio);
 	zio->io_bio = vbio;
+
+	/* Using calling thread io, don't dispatch zio. */
+	if (zio->io_complete == ZIO_BS_DONE)
+		return;
 
 	zio_delay_interrupt(zio);
 }
@@ -980,6 +1003,18 @@ vdev_disk_io_rw(zio_t *zio)
 
 	/* Fill it with data pages and submit it to the kernel */
 	vbio_submit(vbio, abd, zio->io_size);
+
+	/*
+	 * If we're using calling thread io, we waited for io to complete
+	 * in vbio_submit, so now check that everything went okay.
+	 */
+	if (zio->io_complete == ZIO_BS_WAITING) {
+		zio->io_complete = ZIO_BS_DONE;
+		/* Overwritten in submit_bio_wait */
+		vbio->vbio_bio->bi_private = vbio;
+		vbio_completion(vbio->vbio_bio);
+	}
+
 	return (0);
 }
 
@@ -1370,3 +1405,6 @@ ZFS_MODULE_PARAM(zfs_vdev, zfs_vdev_, failfast_mask, UINT, ZMOD_RW,
 
 ZFS_MODULE_PARAM(zfs_vdev_disk, zfs_vdev_disk_, max_segs, UINT, ZMOD_RW,
 	"Maximum number of data segments to add to an IO request (min 4)");
+
+ZFS_MODULE_PARAM(zfs_vdev_disk, zfs_vdev_disk_, calling_thread_io, UINT,
+	ZMOD_RW, "Enable calling thread io");
