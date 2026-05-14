@@ -461,7 +461,7 @@ spa_config_lock_init(spa_t *spa)
 		cv_init(&scl->scl_cv, NULL, CV_DEFAULT, NULL);
 		scl->scl_writer = NULL;
 		scl->scl_write_wanted = 0;
-		scl->scl_count = 0;
+		atomic_store_32(&scl->scl_count, 0);
 	}
 }
 
@@ -473,8 +473,8 @@ spa_config_lock_destroy(spa_t *spa)
 		mutex_destroy(&scl->scl_lock);
 		cv_destroy(&scl->scl_cv);
 		ASSERT0P(scl->scl_writer);
-		ASSERT0(scl->scl_write_wanted);
-		ASSERT0(scl->scl_count);
+		ASSERT0(atomic_load_32(&scl->scl_write_wanted));
+		ASSERT0(atomic_load_32(&scl->scl_count));
 	}
 }
 
@@ -485,26 +485,32 @@ spa_config_tryenter(spa_t *spa, int locks, const void *tag, krw_t rw)
 		spa_config_lock_t *scl = &spa->spa_config_lock[i];
 		if (!(locks & (1 << i)))
 			continue;
-		mutex_enter(&scl->scl_lock);
 		if (rw == RW_READER) {
-			if (scl->scl_writer || scl->scl_write_wanted) {
-				mutex_exit(&scl->scl_lock);
-				spa_config_exit(spa, locks & ((1 << i) - 1),
-				    tag);
-				return (0);
+			if (scl->scl_writer || atomic_load_32(&scl->scl_write_wanted)) {
+				spa_config_exit(spa, locks & ((1 << i) - 1), tag);
+				return (0);	
+			} else {
+				atomic_inc_32(&scl->scl_count);
+				return (1);
 			}
 		} else {
 			ASSERT(scl->scl_writer != curthread);
-			if (scl->scl_count != 0) {
+			if (atomic_load_32(&scl->scl_write_wanted) || !mutex_tryenter(&scl->scl_lock)) {
+				spa_config_exit(spa, locks & ((1 << i) - 1), tag);
+				return (0);
+			}
+
+			atomic_inc_32(&scl->scl_write_wanted);
+			if (atomic_load_32(&scl->scl_count) != 0) {
+				atomic_dec_32(&scl->scl_write_wanted);
 				mutex_exit(&scl->scl_lock);
-				spa_config_exit(spa, locks & ((1 << i) - 1),
-				    tag);
+				spa_config_exit(spa, locks & ((1 << i) - 1), tag);
 				return (0);
 			}
 			scl->scl_writer = curthread;
+			atomic_dec_32(&scl->scl_write_wanted);
+			mutex_exit(&scl->scl_lock);
 		}
-		scl->scl_count++;
-		mutex_exit(&scl->scl_lock);
 	}
 	return (1);
 }
@@ -524,23 +530,27 @@ spa_config_enter_impl(spa_t *spa, int locks, const void *tag, krw_t rw,
 			wlocks_held |= (1 << i);
 		if (!(locks & (1 << i)))
 			continue;
-		mutex_enter(&scl->scl_lock);
+
 		if (rw == RW_READER) {
 			while (scl->scl_writer ||
-			    (!priority_flag && scl->scl_write_wanted)) {
+			    (!priority_flag && atomic_load_32(&scl->scl_write_wanted))) {
+				mutex_enter(&scl->scl_lock);
 				cv_wait(&scl->scl_cv, &scl->scl_lock);
+				mutex_exit(&scl->scl_lock);
 			}
 		} else {
+			mutex_enter(&scl->scl_lock);
 			ASSERT(scl->scl_writer != curthread);
-			while (scl->scl_count != 0) {
-				scl->scl_write_wanted++;
+			atomic_inc_32(&scl->scl_write_wanted);
+			while (atomic_load_32(&scl->scl_count) != 0) {
 				cv_wait(&scl->scl_cv, &scl->scl_lock);
-				scl->scl_write_wanted--;
 			}
 			scl->scl_writer = curthread;
+			atomic_dec_32(&scl->scl_write_wanted);
+			mutex_exit(&scl->scl_lock);
+
 		}
-		scl->scl_count++;
-		mutex_exit(&scl->scl_lock);
+		atomic_inc_32(&scl->scl_count);
 	}
 	ASSERT3U(wlocks_held, <=, locks);
 }
@@ -574,15 +584,16 @@ spa_config_exit(spa_t *spa, int locks, const void *tag)
 		spa_config_lock_t *scl = &spa->spa_config_lock[i];
 		if (!(locks & (1 << i)))
 			continue;
-		mutex_enter(&scl->scl_lock);
-		ASSERT(scl->scl_count > 0);
-		if (--scl->scl_count == 0) {
+		ASSERT(atomic_load_32(&scl->scl_count));
+
+		if (atomic_dec_32_nv(&scl->scl_count) == 0) {
+			mutex_enter(&scl->scl_lock);
 			ASSERT(scl->scl_writer == NULL ||
 			    scl->scl_writer == curthread);
 			scl->scl_writer = NULL;	/* OK in either case */
 			cv_broadcast(&scl->scl_cv);
-		}
-		mutex_exit(&scl->scl_lock);
+			mutex_exit(&scl->scl_lock);
+		}	
 	}
 }
 
@@ -595,8 +606,8 @@ spa_config_held(spa_t *spa, int locks, krw_t rw)
 		spa_config_lock_t *scl = &spa->spa_config_lock[i];
 		if (!(locks & (1 << i)))
 			continue;
-		if ((rw == RW_READER && scl->scl_count != 0) ||
-		    (rw == RW_WRITER && scl->scl_writer == curthread))
+		if ((rw == RW_READER && atomic_load_32(&scl->scl_count)) ||
+		    (rw == RW_WRITER && (atomic_load_32(&scl->scl_count)) && scl->scl_writer == curthread))
 			locks_held |= 1 << i;
 	}
 
